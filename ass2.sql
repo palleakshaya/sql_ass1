@@ -362,3 +362,268 @@ BEGIN
 end
 GO
 SELECT dbo.avgsalesamnt('Romance')
+
+
+
+--Section 4: Advanced SQL Concepts
+--Inline Table-Valued Function (iTVF)
+--1. Create an inline table-valued function that returns the total sales amount for each book and use it in a query to display the results.
+
+Go
+create Function dbo.GetTotalSalesAmtEachBook(@title nvarchar(50))
+returns table
+As
+Return(
+select books.book_id,title,total_amount
+from authors
+join books on authors.author_id=books.author_id
+join sales on books.book_id=sales.book_id
+group by books.book_id,title,total_amount
+having title=@title
+)
+Go
+
+select * from dbo.GetTotalSalesAmtEachBook('1984');
+
+--Multi-Statement Table-Valued Function (MTVF)
+
+--2. Create a multi-statement table-valued function that returns the total quantity sold for each genre and use it in a query to display the results.
+
+GO
+alter Function dbo.GetBookCountByGenre()
+Returns @CountBooks Table(genre nvarchar(30) ,CountOfBooks int)
+As
+Begin
+Insert Into @CountBooks
+select b.genre , sum(s.quantity) as CountOfBooks 
+from sales s
+join books b on s.book_id=b.book_id
+group by genre
+	Return;
+End
+GO
+
+select * from dbo.GetBookCountByGenre();
+
+--Scalar Function
+--3. Create a scalar function that returns the average price of books for a given author and use it in a query to display the average price for 'Jane Austen'.
+
+go
+alter function dbo.AvgPriceOfBooksPerAuthor(@authorname nvarchar(50))
+returns int
+as
+Begin
+DECLARE @res int
+select @res=avg(price)
+from books
+where books.author_id=(select author_id from authors where [name]=@authorname)
+group by author_id
+return @res
+end
+go
+
+select dbo.AvgPriceOfBooksPerAuthor('George Orwell')
+
+--Stored Procedure for Books with Minimum Sales
+--4. Create a stored procedure that returns books with total sales above a specified amount and use it to display books with total sales above $40.
+
+go
+create PROCEDURE TopTotalSales
+ @MinAmount int
+AS
+BEGIN 
+Select sales.book_id,title ,total_amount 
+from sales 
+join books on sales.book_id=books.book_id
+where total_amount > @MinAmount
+END
+go
+
+exec TopTotalSales @MinAmount=40
+
+--5.Indexing for Performance Improvement
+--Create an index on the sales table to improve query performance for queries filtering by book_id.
+CREATE INDEX  IX_BOOK_ID
+    ON sales (book_id); 
+--Export Data as XML
+--6. Write a query to export the authors and their books as XML.
+select [name], title
+from authors
+join books on authors.author_id=books.book_id
+for xml path('Author'),root('Authors')
+--Export Data as JSON
+--7.Write a query to export the authors and their books as JSON.
+select [name], title
+from authors
+join books on authors.author_id=books.book_id
+for json path,root('Authors')
+
+--Scalar Function for Total Sales in a Year
+--8. Create a scalar function that returns the total sales amount in a given year and use it in a query to display the total sales for 2024.
+go
+create function  dbo.TotalSalesInYear(@year int)
+returns int
+as
+begin
+declare @totalsales decimal(10,2)
+select @totalsales=sum(total_amount)
+from sales
+where datepart(year,sale_date)=@year
+return @totalsales
+end
+go
+
+select dbo.TotalSalesInYear(2024)
+
+--9.Stored Procedure for Genre Sales Report
+--Create a stored procedure that returns a sales report for a specific genre, including total sales and average sales, and use it to display the report for 'Fiction'.
+go
+alter procedure SalesReport
+@genre nvarchar(30)
+as
+begin
+declare @totalsales int
+declare @avgtotalsales int
+select @totalsales =sum(total_amount), @avgtotalsales=avg(total_amount) 
+from books
+join sales on books.book_id=sales.book_id
+where genre=@genre
+
+select @genre ,@totalsales as TotalSales ,  @avgtotalsales as AvgTotalSales
+
+end
+go
+
+exec SalesReport @genre='Fiction'
+
+--Ranking Books by Average Rating (assuming a ratings table)
+--10.Write a query to rank books by their average rating and display the top 3 books. Assume a ratings table with book_id and rating columns.
+CREATE TABLE ratings (
+    rating_id INT PRIMARY KEY,
+    book_id INT NOT NULL,
+    rating DECIMAL(3, 1) NOT NULL,
+    CONSTRAINT FK_ratings_books FOREIGN KEY (book_id) REFERENCES books(book_id)
+);
+
+INSERT INTO ratings (rating_id, book_id, rating) VALUES
+(1, 1, 4.5),
+(2, 2, 4.0),
+(3, 3, 4.8),
+(4, 4, 3.7),
+(5, 5, 4.2);
+
+with CTE_TopRatedBooks
+as
+(
+select books.book_id, title,rating, DENSE_RANK() OVER(ORDER BY rating desc) as TopRatings
+from books
+join ratings on books.book_id=ratings.book_id
+)
+
+select * from CTE_TopRatedBooks
+where TopRatings<=3
+
+--Section 5: Questions for Running Total and Running Average with OVER Clause
+--1. Running Total of Sales Amount by Book
+--Create a view that displays each sale for a book along with the running total of the sales amount using the OVER clause.
+select * ,
+sum(total_amount) over(order by total_amount) as running_total
+from sales
+
+--Running Total of Sales Quantity by Author
+--2. Create a view that displays each sale for an author along with the running total of the sales quantity using the OVER clause.
+create view RunningTotalOfSalesQuant
+as
+select authors.author_id,[title],sale_id ,quantity, sum(quantity) over(order by quantity) as CountOfQuantity
+from authors
+join books on authors.author_id=books.author_id
+join sales on books.book_id=sales.book_id
+
+select * from RunningTotalOfSalesQuant
+
+--Running Total and Running Average of Sales Amount by Genre
+--3. Create a view that displays each sale for a genre along with both the running total and the running average of the sales amount using the OVER clause.
+create view RunningTotalByGenre
+as
+select books.book_id , title , genre , sale_id , total_amount , sum(total_amount) over (order by total_amount) as Running_total 
+, avg(total_amount) over (order by total_amount) as Running_avg
+from books
+join sales on books.book_id=sales.sale_id
+
+select * from RunningTotalByGenre
+
+--Section 6: Triggers
+--Trigger to Update Total Sales After Insert on Sales Table
+--Create a trigger that updates the total sales for a book in the books table after a new record is inserted into the sales table.
+go
+create trigger trg_UpdateSales
+on sales
+after insert
+as 
+begin
+
+update sales
+set 
+end
+go
+
+--Trigger to Log Deletions from the Sales Table
+--2. Create a trigger that logs deletions from the sales table into a sales_log table with the sale_id, book_id, and the delete_date.
+
+CREATE TABLE sales_log (
+    log_id INT PRIMARY KEY identity(201,1),
+    sale_id INT NOT NULL,
+    book_id INT NOT NULL,
+    delete_date DATE NOT NULL,
+    FOREIGN KEY (sale_id) REFERENCES sales(sale_id),
+    FOREIGN KEY (book_id) REFERENCES books(book_id)
+);
+
+
+go
+create Trigger trg_SalesLog
+on sales -- SQL listens to this table
+After delete -- Before/after (I,U,D) -- Action
+As
+Begin
+
+   Insert into sales_log
+   select deleted.sale_id,deleted.book_id,deleted.sale_date
+   FROM deleted
+End
+go
+
+select * from sales_log
+
+
+delete from sales
+where sale_id=3 
+
+delete from books
+where title='Adventures of Huckleberry Finn'
+
+delete from authors 
+where author_id=3
+
+insert into authors
+
+--Trigger to Prevent Negative Quantity on Update
+--3. Create a trigger that prevents updates to the sales table if the new quantity is negative.
+go
+create trigger trg_PreventsUpdate
+ON sales
+after UPDATE
+as
+begin
+if exists( select inserted.quantity from inserted where inserted.quantity<0)
+  throw 60000, 'Quantity value is negative!!!', 1;
+end
+go
+
+UPDATE sales
+SET quantity = -1
+WHERE sale_id = 1;
+
+select * from authors
+select * from books
+select * from sales
